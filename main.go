@@ -1,34 +1,40 @@
 package main
 
 import (
+	"errors"
 	"fmt"
-	"log"
 	"os"
-	"strings"
 	c "yisany.top/milu/dslConvert/convert"
 )
 
-func main() {
-	//gin.SetMode(gin.ReleaseMode)
-	//router := routers.InitRouter()
-	//endless.ListenAndServe(":3232", router)
-
+func NewInit() (string, bool, error) {
 	if len(os.Args) < 2 {
-		log.Fatalf("Error: convert error, param is missing")
-		os.Exit(1)
+		return "", false, errors.New("convert error, param is missing")
 	}
-
-	var sql string
-	if strings.HasPrefix(os.Args[1], "\"") {
-		sql = os.Args[1]
-	} else {
-		sql = strings.Join(os.Args[1:], " ")
+	sql := os.Args[1]
+	isPretty := false
+	if len(os.Args) > 2 && "-p" == os.Args[2] {
+		isPretty = true
 	}
 	fmt.Printf("Init sql:\n%s\n", sql)
+	return sql, isPretty, nil
+}
 
-	dsl, _, err := c.Convert(sql)
+func main() {
+	sql, isPretty, e := NewInit()
+	if e != nil {
+		fmt.Printf("init error: %s\n", e.Error())
+		os.Exit(1)
+	}
+	var dsl string
+	var err error
+	if isPretty {
+		dsl, _, err = c.ConvertPretty(sql)
+	} else {
+		dsl, _, err = c.Convert(sql)
+	}
 	if err != nil {
-		log.Fatalf("sql convert error: %s\n", err)
+		fmt.Printf("sql convert error: %s\n", err.Error())
 		os.Exit(1)
 	}
 	fmt.Printf("Convert dsl:\n%s\n", dsl)

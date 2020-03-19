@@ -25,7 +25,7 @@ func handleSelect(sel *sqlparser.Select) (dsl string, esType string, err error) 
 		}
 	}
 	if queryMapStr == "" {
-		queryMapStr = DefaultQueryMapStr
+		queryMapStr = defaultQueryMapStr
 	}
 
 	//Handle from
@@ -35,7 +35,7 @@ func handleSelect(sel *sqlparser.Select) (dsl string, esType string, err error) 
 	esType = sqlparser.String(sel.From)
 	esType = strings.Replace(esType, "`", "", -1)
 
-	queryFrom, querySize := DefaultFrom, DefaultSize
+	queryFrom, querySize := defaultFrom, defaultSize
 
 	aggFlag := false
 	// if the request is to aggregation
@@ -143,7 +143,7 @@ func handleSelectWhereAndExpr(expr *sqlparser.Expr, topLevel bool, parent *sqlpa
 	if _, ok := (*parent).(*sqlparser.AndExpr); ok {
 		return resultStr, nil
 	}
-	return fmt.Sprintf(`{"bool" : {"must" : [%v]}}`, resultStr), nil
+	return fmt.Sprintf(topBoolMust, resultStr), nil
 }
 
 func handleSelectWhereOrExpr(expr *sqlparser.Expr, topLevel bool, parent *sqlparser.Expr) (string, error) {
@@ -226,27 +226,28 @@ func handleSelectWhereComparisonExpr(expr *sqlparser.Expr, topLevel bool, parent
 
 	resultStr := ""
 
+	// dslRangeGreaterAndEqual
 	switch comparisonExpr.Operator {
 	case ">=":
-		resultStr = fmt.Sprintf(`{"range" : {"%v" : {"from" : "%v"}}}`, colNameStr, rightStr)
+		resultStr = fmt.Sprintf(dslRangeGreaterAndEqual, colNameStr, rightStr)
 	case "<=":
-		resultStr = fmt.Sprintf(`{"range" : {"%v" : {"to" : "%v"}}}`, colNameStr, rightStr)
+		resultStr = fmt.Sprintf(dslRangeLessAndEqual, colNameStr, rightStr)
 	case "=":
 		// field is missing
 		if missingCheck {
-			resultStr = fmt.Sprintf(`{"missing":{"field":"%v"}}`, colNameStr)
+			resultStr = fmt.Sprintf(dslRangeEqualMissing, colNameStr)
 		} else {
-			resultStr = fmt.Sprintf(`{"match_phrase" : {"%v" : {"query" : "%v"}}}`, colNameStr, rightStr)
+			resultStr = fmt.Sprintf(dslRangeEqual, colNameStr, rightStr)
 		}
 	case ">":
-		resultStr = fmt.Sprintf(`{"range" : {"%v" : {"gt" : "%v"}}}`, colNameStr, rightStr)
+		resultStr = fmt.Sprintf(dslRangeGreater, colNameStr, rightStr)
 	case "<":
-		resultStr = fmt.Sprintf(`{"range" : {"%v" : {"lt" : "%v"}}}`, colNameStr, rightStr)
+		resultStr = fmt.Sprintf(dslRangeLess, colNameStr, rightStr)
 	case "!=":
 		if missingCheck {
-			resultStr = fmt.Sprintf(`{"bool" : {"must_not" : [{"missing":{"field":"%v"}}]}}`, colNameStr)
+			resultStr = fmt.Sprintf(dslRangeNotEqualMissing, colNameStr)
 		} else {
-			resultStr = fmt.Sprintf(`{"bool" : {"must_not" : [{"match_phrase" : {"%v" : {"query" : "%v"}}}]}}`, colNameStr, rightStr)
+			resultStr = fmt.Sprintf(dslRangeNotEqual, colNameStr, rightStr)
 		}
 	case "in":
 		// the default valTuple is ('1', '2', '3') like
@@ -254,25 +255,72 @@ func handleSelectWhereComparisonExpr(expr *sqlparser.Expr, topLevel bool, parent
 		rightStr = strings.Replace(rightStr, `'`, `"`, -1)
 		rightStr = strings.Trim(rightStr, "(")
 		rightStr = strings.Trim(rightStr, ")")
-		resultStr = fmt.Sprintf(`{"terms" : {"%v" : [%v]}}`, colNameStr, rightStr)
+		resultStr = fmt.Sprintf(dslRangeIn, colNameStr, rightStr)
 	case "like":
 		rightStr = strings.Replace(rightStr, `%`, ``, -1)
-		resultStr = fmt.Sprintf(`{"match_phrase" : {"%v" : {"query" : "%v"}}}`, colNameStr, rightStr)
+		resultStr = fmt.Sprintf(dslRangeLike, colNameStr, rightStr)
 	case "not like":
 		rightStr = strings.Replace(rightStr, `%`, ``, -1)
-		resultStr = fmt.Sprintf(`{"bool" : {"must_not" : {"match_phrase" : {"%v" : {"query" : "%v"}}}}}`, colNameStr, rightStr)
+		resultStr = fmt.Sprintf(dslRangeNotLike, colNameStr, rightStr)
 	case "not in":
 		// the default valTuple is ('1', '2', '3') like
 		// so need to drop the () and replace ' to "
 		rightStr = strings.Replace(rightStr, `'`, `"`, -1)
 		rightStr = strings.Trim(rightStr, "(")
 		rightStr = strings.Trim(rightStr, ")")
-		resultStr = fmt.Sprintf(`{"bool" : {"must_not" : {"terms" : {"%v" : [%v]}}}}`, colNameStr, rightStr)
+		resultStr = fmt.Sprintf(dslRangeNotIn, colNameStr, rightStr)
 	}
 
 	// the root node need to have bool and must
 	if topLevel {
-		resultStr = fmt.Sprintf(`{"bool" : {"must" : [%v]}}`, resultStr)
+		resultStr = fmt.Sprintf(topBoolMust, resultStr)
+	}
+
+	return resultStr, nil
+}
+
+func handleSelectWhereRangeExpr(expr *sqlparser.Expr, topLevel bool, parent *sqlparser.Expr) (string, error) {
+	// between a and b
+	// the meaning is equal to range query
+	rangeCond := (*expr).(*sqlparser.RangeCond)
+	colName, ok := rangeCond.Left.(*sqlparser.ColName)
+
+	if !ok {
+		return "", errors.New("elasticsql: range column name missing")
+	}
+
+	colNameStr := sqlparser.String(colName)
+	fromStr := strings.Trim(sqlparser.String(rangeCond.From), `'`)
+	toStr := strings.Trim(sqlparser.String(rangeCond.To), `'`)
+
+	resultStr := fmt.Sprintf(dslRange, colNameStr, fromStr, toStr)
+	if topLevel {
+		resultStr = fmt.Sprintf(topBoolMust, resultStr)
+	}
+
+	return resultStr, nil
+}
+
+func handleSelectWhereParen(expr *sqlparser.Expr, topLevel bool, parent *sqlparser.Expr) (string, error) {
+	parentBoolExpr := (*expr).(*sqlparser.ParenExpr)
+	boolExpr := parentBoolExpr.Expr
+
+	// if paren is the top level, bool must is needed
+	var isThisTopLevel = false
+	if topLevel {
+		isThisTopLevel = true
+	}
+	return handleSelectWhere(&boolExpr, isThisTopLevel, parent)
+}
+
+func handleSelectWhereExists(expr *sqlparser.Expr, topLevel bool, parent *sqlparser.Expr) (string, error) {
+	existsExpr := (*expr).(*sqlparser.ExistsExpr)
+	s := (existsExpr.Subquery.Select).(*sqlparser.Select)
+	field := sqlparser.String(s.SelectExprs)
+
+	resultStr := fmt.Sprintf(dslExists, field)
+	if topLevel {
+		resultStr = fmt.Sprintf(topBoolMust, resultStr)
 	}
 
 	return resultStr, nil
@@ -283,7 +331,6 @@ func handleSelectWhere(expr *sqlparser.Expr, topLevel bool, parent *sqlparser.Ex
 		return "", errors.New("elasticsql: error expression cannot be nil here")
 	}
 
-	// 没有实现exist语法
 	switch (*expr).(type) {
 	case *sqlparser.AndExpr:
 		return handleSelectWhereAndExpr(expr, topLevel, parent)
@@ -291,53 +338,16 @@ func handleSelectWhere(expr *sqlparser.Expr, topLevel bool, parent *sqlparser.Ex
 		return handleSelectWhereOrExpr(expr, topLevel, parent)
 	case *sqlparser.ComparisonExpr:
 		return handleSelectWhereComparisonExpr(expr, topLevel, parent)
-	case *sqlparser.IsExpr:
-		return "", errors.New("elasticsql: is expression currently not supported")
 	case *sqlparser.RangeCond:
-		// between a and b
-		// the meaning is equal to range query
-		rangeCond := (*expr).(*sqlparser.RangeCond)
-		colName, ok := rangeCond.Left.(*sqlparser.ColName)
-
-		if !ok {
-			return "", errors.New("elasticsql: range column name missing")
-		}
-
-		colNameStr := sqlparser.String(colName)
-		fromStr := strings.Trim(sqlparser.String(rangeCond.From), `'`)
-		toStr := strings.Trim(sqlparser.String(rangeCond.To), `'`)
-
-		resultStr := fmt.Sprintf(`{"range" : {"%v" : {"from" : "%v", "to" : "%v"}}}`, colNameStr, fromStr, toStr)
-		if topLevel {
-			resultStr = fmt.Sprintf(`{"bool" : {"must" : [%v]}}`, resultStr)
-		}
-
-		return resultStr, nil
-
+		return handleSelectWhereRangeExpr(expr, topLevel, parent)
 	case *sqlparser.ParenExpr:
-		parentBoolExpr := (*expr).(*sqlparser.ParenExpr)
-		boolExpr := parentBoolExpr.Expr
-
-		// if paren is the top level, bool must is needed
-		var isThisTopLevel = false
-		if topLevel {
-			isThisTopLevel = true
-		}
-		return handleSelectWhere(&boolExpr, isThisTopLevel, parent)
+		return handleSelectWhereParen(expr, topLevel, parent)
+	case *sqlparser.ExistsExpr:
+		return handleSelectWhereExists(expr, topLevel, parent)
 	case *sqlparser.NotExpr:
 		return "", errors.New("elasticsql: not expression currently not supported")
-	case *sqlparser.ExistsExpr:
-		existsExpr := (*expr).(*sqlparser.ExistsExpr)
-		s := (existsExpr.Subquery.Select).(*sqlparser.Select)
-		field := sqlparser.String(s.SelectExprs)
-		fmt.Println(field)
-
-		resultStr := fmt.Sprintf(`{"exists" : {"field" : "%v"}}`, field)
-		if topLevel {
-			resultStr = fmt.Sprintf(`{"bool" : {"must" : [%v]}}`, resultStr)
-		}
-
-		return resultStr, nil
+	case *sqlparser.IsExpr:
+		return "", errors.New("elasticsql: is expression currently not supported")
 	}
 
 	return "", errors.New("elaticsql: logically cannot reached here")

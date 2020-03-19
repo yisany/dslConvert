@@ -33,7 +33,6 @@ func Convert(sql string) (dsl string, table string, err error) {
 	}
 
 	//sql valid, start to handle
-	// 在es中, dsl只支持select
 	switch stmt.(type) {
 	case *sqlparser.Select:
 		dsl, table, err = handleSelect(stmt.(*sqlparser.Select))
