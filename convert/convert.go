@@ -37,11 +37,11 @@ func Convert(sql string) (dsl string, table string, err error) {
 	case *sqlparser.Select:
 		dsl, table, err = handleSelect(stmt.(*sqlparser.Select))
 	case *sqlparser.Update:
-		return handleUpdate(stmt.(*sqlparser.Update))
+		dsl, table, err = handleUpdate(stmt.(*sqlparser.Update))
 	case *sqlparser.Insert:
-		return handleInsert(stmt.(*sqlparser.Insert))
+		dsl, table, err = handleInsert(stmt.(*sqlparser.Insert))
 	case *sqlparser.Delete:
-		return handleDelete(stmt.(*sqlparser.Delete))
+		dsl, table, err = handleDelete(stmt.(*sqlparser.Delete))
 	}
 
 	if err != nil {
