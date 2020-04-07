@@ -43,7 +43,7 @@ func send(isSuccess bool, m interface{}, e error, c *gin.Context) {
 			Message: "ok~",
 		})
 	} else {
-		c.JSON(http.StatusExpectationFailed, Response{
+		c.JSON(http.StatusOK, Response{
 			Status:  http.StatusBadRequest,
 			Data:    nil,
 			Message: e.Error(),

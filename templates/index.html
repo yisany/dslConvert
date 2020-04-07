@@ -126,7 +126,11 @@
                 type: "POST",
                 dataType: "json",
                 success: function (data) {
-                    dslEditor.setValue(data.data)
+                    if (200 != data.status) {
+                        alert("解析失败:" + data.message)
+                    } else {
+                        dslEditor.setValue(data.data)
+                    }
                 },
                 error: function () {
                     alert("解析失败")
